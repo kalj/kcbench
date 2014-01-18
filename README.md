@@ -1,7 +1,7 @@
 kcbench
 =======
 
-<pre>
+```
 Kernel compile benchmark script
 Usage: kcbench [options]
 
@@ -25,4 +25,4 @@ Available options:
  -V, --version                -- output program version
 
 (*) -- option can be passed multiple times
-</pre>
+```
