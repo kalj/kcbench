@@ -1,0 +1,22 @@
+# todo:
+# - print cpufreq data?
+
+2008-12-03  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+
+        * Version 0.2
+		* add short command line options
+		* make more detailed output possible
+		* add ChangeLog and manpage, strip readme
+
+2008-10-22  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+
+		* Version 0.1.2
+		* formating changes
+		* make it possible to show the elapsed time from the cache run
+		
+
+2008-10-15  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+
+        * Initial Version 0.1.1
+
+

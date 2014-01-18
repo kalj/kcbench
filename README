@@ -1,0 +1,5 @@
+Kcbench is a kernel compile benchmark; it compiles a Linux kernel and measures
+the time it takes for performance test. Kcbench can also be used to test
+system stability.
+
+For informations how to use please consult the the man page with "man kcbench".
