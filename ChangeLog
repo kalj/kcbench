@@ -1,21 +1,44 @@
-# todo:
-# - print cpufreq data?
+2018-10-07  Thorsten Leemhuis <linux [AT] leemhuis [DOT] info>
 
-2008-12-03  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+        * Version 0.4
+		* automatically download kernel to compile
+		* add option to prevent auto-downloads
+		* add option to specify compiler
+		* skip cache filling run by default and add option to request one
+		* trim results add add units in some places
+		* drop the warnings for background tasks
+
+2010-05-24  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+        * Version 0.3.2
+		* a few output format adjustments
+		* fix cleaning up buildir
+		* create compiledir properly if specified manually
+
+2010-04-24  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+        * Version 0.3.1
+		* fix two typos -- one fixes rhbz #565325
+
+2008-01-10  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+
+        * Version 0.3
+		* fix typo
+		* improve some comments
+
+2008-12-03  Thorsten Leemhuis <linux [AT] leemhuis [DOT] info>
 
         * Version 0.2
 		* add short command line options
 		* make more detailed output possible
 		* add ChangeLog and manpage, strip readme
 
-2008-10-22  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+2007-10-22  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
 
-		* Version 0.1.2
+	* Version 0.1.2
 		* formating changes
 		* make it possible to show the elapsed time from the cache run
 		
 
-2008-10-15  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
+2007-10-15  Thorsten Leemhuis <fedora [AT] leemhuis [DOT] info>
 
         * Initial Version 0.1.1
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # kcbench - kernel compile benchmark
-# Copyright (c) 2007 Thorsten Leemhuis <fedora@leemhuis.info>
+# Copyright (c) 2007-2018 Thorsten Leemhuis <fedora@leemhuis.info>
 #
 # Permission is hereby granted, free of charge, to any person obtaining
 # a copy of this software and associated documentation files (the
@@ -25,7 +25,8 @@
 
 # this is me
 myprog_name=kcbench
-myprog_version=0.3.3
+myprog_version=0.4-beta1
+set -e
 
 # set some defaults -- called before cmdoptions are parsed
 kcbench_init ()
@@ -33,21 +34,28 @@ kcbench_init ()
 	# verbose?
 	verboselevel=2
 
-	# results are normally stable, thus 3 runs after filling the cache should normally be enough
+	# results are normally stable, thus 3 runs after filling the caches should normally be enough
 	default_number_of_iterations=3
 
-	# used together with make -j 
+	# used together with make -j
 	# number of CPUs * 2
-	default_number_of_jobs=$(($(grep '^processor' < /proc/cpuinfo  | wc -l)*2))
+	default_number_of_jobs=$(($(nproc --all)*2))
 
 	# we search for kernels to compile here
 	# note that I didn't use /usr/src/ on purpose as localtion -- kernels there 
 	# might be modified
-	default_sources_dir="/usr/share/kcbench-data/"
+	default_sources_dir_sys="/usr/share/kcbench-data/"
+	default_sources_dir_home="${HOME}/.cache/kcbench/"
 
-	# retrieve settings from file
-	if [[ -e "${HOME}/.kcbench" ]]; then
-		source "${HOME}/.kcbench"
+	# use gcc by default
+	compiler="gcc"
+
+	# Download this version by default:
+	default_linux_to_compile="4.14"
+
+	# retrieve settings from file (undocumented)
+	if [[ -e "${HOME}/.config/kcbench" ]]; then
+		source "${HOME}/.config/kcbench"
 	fi
 }
 
@@ -55,93 +63,46 @@ kcbench_init ()
 # check everthing before starting
 kcbench_startupchecks()
 {
-	# check for tools we need
-	for tool in make gcc ld awk /usr/bin/time; do
-		if ! type ${tool} &> /dev/null ; then
-			echo "Could not find ${tool}"
-			exit 2
-		fi
-	done
+	# do we have all the tools we need?
+	kcbench_checktools make ld awk /usr/bin/time "${compiler}"
+	
+	# decide which version to compile by default
+	kcbench_decideversion
 
-	# check if cron or other stuff runs and give a warning
-	if [[ ! "${ignore_running_apps}" ]]; then
-		local runningtasks="$(echo $(ps -A | grep --word -e crond -e httpd -e atd -e sendmail -e smbd | awk '{print $4}' | sort | uniq))"
-		if [[ "${runningtasks}" ]] ; then
-			echo "WARNING: There are some daemons runnning in the background:" >&2
-			echo "  ${runningtasks}" >&2
-			echo "  Those might disturb the benchmark; you should disable them!" >&2
-			echo "  (use '--ignore-running-apps' to disabled this warning" >&2
-			sleep 5
-		fi
-	fi
+	# find a tree to compile
+	kcbench_findsrctree
 
-	# find a srctree to compile!
-	if [[ "${compile_srctree}" ]]; then
-		# user provided some informations what kernel to use
-		if [[ -e "${compile_srctree}/include/linux/kernel.h" ]] ; then
-			# is a local tree -- but we need the full path!
-			if [[ "${compile_srctree}" == "${compile_srctree##/}" ]]; then
-				dir_sources="${PWD}/${compile_srctree}"
-			else
-				dir_sources="${compile_srctree}"
-			fi
-		elif [[ -e "${default_sources_dir}/linux-${compile_srctree}/include/linux/kernel.h" ]]; then
-			# user meant a tree prepared for kcbench by just giving version number
-			dir_sources="${default_sources_dir%%/}/linux-${compile_srctree%%/}/"
-		else
-			echo "Could neither find directory ${compile_srctree} nor ${default_sources_dir%%/}/linux-${compile_srctree%%/}/" >&2
-			exit 2
-		fi
-	else
-		# we need to decide own our own
-
-		# without our std-dir it doesn't make sense to continue
-		if [[ ! -d "${default_sources_dir}" ]]; then
-			echo "${default_sources_dir} not found." >&2
-			exit 2
-		fi
-
-		# use the latest one by default
-		dir_sources="${default_sources_dir%%/}/$(ls -r "${default_sources_dir}" | head -n 1)"
-		if [[ ! -e "${dir_sources}/include/linux/kernel.h" ]]; then
-			echo "Found ${default_sources_dir}, but doesn't look like a kernel srctree." >&2
-			exit 2
-		fi
-	fi
-
-
-	# on testsystems the date sometimes is set incorectly
-	# check date prevent misscompiles
-	if (( $(date -r "${dir_sources}/Makefile" "+%s") > $(date "+%s") )); then
+	# check date prevent errors on testsystems where date sometimes is set incorectly
+	if (( $(date -r "${dir_sources}/Makefile" "+%s" 2> /dev/null) > $(date "+%s") )); then
 		echo "Makefile is younger then current date; please set your system time properly." >&2
 		exit 2
 	fi
 
 
-	# create tempdir and remove it on exit
+	# create dir for compiling and remove it on exit
 	trap 'kcbench_exit 127' 1 2 15
-	if [[ "${dir_topoutput}" ]]; then
-		# dir_topoutput present?
-		if [[ ! -d "${dir_topoutput}" ]]; then
-			echo "Could not find ${dir_topoutput}" >&2
+	if [[ "${compile_directory}" ]]; then
+		# specified compile_directory present?
+		if [[ ! -d "${compile_directory}" ]]; then
+			echo "Could not find ${compile_directory}" >&2
 			exit 2
 		fi
-		if [[ "${dir_topoutput}" == "${dir_topoutput##/}" ]]; then
+		if [[ "${compile_directory}" == "${compile_directory##/}" ]]; then
 			# we need the full path
-			dir_topoutput="${PWD}/${dir_topoutput}"
+			compile_directory="${PWD}/${compile_directory}"
 		fi
 
-		# if the kcbench dir exists in dir_topoutput already just use it
-		if [[ ! -d "${dir_topoutput%%/}/${myprog_name}" ]]; then
-			if ! mkdir ${dir_topoutput%%/}/${myprog_name}; then
-				echo "Could not create ${dir_topoutput%%/}/${myprog_name}" >&2
+		# if the kcbench dir exists in compile_directory already just use it
+		if [[ ! -d "${compile_directory%%/}/${myprog_name}" ]]; then
+			if ! mkdir ${compile_directory%%/}/${myprog_name}; then
+				echo "Could not create ${compile_directory%%/}/${myprog_name}" >&2
 				exit 2
 			fi
 		fi
-		readonly dir_outputtmp="${dir_topoutput%%/}/${myprog_name}"
+		readonly dir_outputtmp="${compile_directory%%/}/${myprog_name}"
 
 	else
-		# use a tmp dir
+		# create a tmp dir
 		readonly dir_outputtmp=$(mktemp -d -t ${myprog_name}.XXXXXXXXX)
 	fi
 
@@ -196,9 +157,135 @@ kcbench_startupchecks()
 	kcbench_logfile="${dir_outputtmp}/kcbench/log"
 	touch "${kcbench_logfile}"
 
+}
 
-	# disable sceensaver (should we reset this once we finished? how?)
-	setterm -blank 0
+kcbench_checktools()
+{
+	# check for tools we need
+	for tool in $@ ; do
+		if ! type ${tool} &> /dev/null ; then
+			echo "${tool} needed, but could not be found. Aboring" >&2
+			exit 2
+		fi
+	done
+}
+
+kcbench_decideversion()
+{
+	# user provided us with something
+	if [[ "${compile_srctree}" ]] ; then
+		if [[ -d "${compile_srctree}" ]]; then
+			# not needed when a patch was specified
+			unset linux_to_compile
+		else
+			linux_to_compile="${compile_srctree}"
+		fi
+	else
+		case $(gcc --version | head -n 1 | cut -d ' ' -f 3 2>/dev/null | cut -d . -f 1 2>/dev/null) in
+		# this is known to only work with gcc right now
+		4|5|6|7|8)
+			linux_to_compile="4.14"
+			;;
+		*)
+			echo "Warning: Could not find a default linux version to compile with your compiler"
+			echo "Please report to linux@leemhuis.info"
+			echo "Using ${default_linux_to_compile}"
+			linux_to_compile=${default_linux_to_compile}
+		esac;
+	fi
+}
+
+# find a srctree to compile!
+kcbench_findsrctree()
+{
+	# use user provided information if avilable
+	if [[ -d "${compile_srctree}" ]]; then
+		if [[ -e "${compile_srctree}/include/linux/kernel.h" ]] ; then
+			# user provided a local directory. Make sure we have the full path.
+			if [[ "${compile_srctree}" == "${compile_srctree##/}" ]]; then
+				dir_sources="${PWD}/${compile_srctree}"
+			else
+				dir_sources="${compile_srctree}"
+			fi
+		elif [[ -e "${default_sources_dir_sys}/linux-${compile_srctree}/include/linux/kernel.h" ]]; then
+			# user meant a tree prepared for kcbench by just giving version number
+			dir_sources="${default_sources_dir_sys%%/}/linux-${compile_srctree%%/}/"
+		elif [[ -e "${default_sources_dir_home%%/}/linux-${compile_srctree}/include/linux/kernel.h" ]]; then
+			# user meant a tree prepared for kcbench by just giving version number
+			dir_sources="${default_sources_dir_home%%/}/linux-${compile_srctree%%/}/"
+		else
+			echo "Could neither find directory ${compile_srctree}, ${default_sources_dir_sys%%/}/linux-${compile_srctree%%/}/, or ${default_sources_dir_home%%/}/linux-${compile_srctree%%/}/" >&2
+			exit 2
+		fi	
+		return 0
+	fi
+
+
+	# something already available in homedir?
+	if [[ -d "${default_sources_dir_home%%/}"/linux-"${linux_to_compile}" ]]; then
+		dir_sources="${default_sources_dir_home%%/}"/linux-"${linux_to_compile}"
+		return 0
+	fi
+
+	# something available system wide?
+	if [[ -d "${default_sources_dir_sys%%/}"/linux-"${linux_to_compile}" ]]; then
+		dir_sources="${default_sources_dir_sys%%/}"/linux-"${linux_to_compile}"
+		return 0
+	fi
+
+	# only remaining option: download
+	if [[ "${noautodownloads}" ]]; then
+		echo "Could not find a source tree to compile. Please specify one or allow auto-downloads" >&2
+		exit 2
+	fi
+
+	if ! mkdir -p "${default_sources_dir_home}"; then
+		echo "Could not create ${sourcesdir_autolocal}; aborting."  >&2 
+		exit 2
+	fi
+
+	# remove partial downloads
+	if [[ -e "${default_sources_dir_home}downloading" ]]; then
+		rm -rf "${default_sources_dir_home}downloading"
+	fi
+
+	if ! mkdir -p "${default_sources_dir_home}downloading" ; then
+		echo Could not create "${default_sources_dir_home}downloading" >&2
+		exit 2
+	fi
+
+
+	# use pre-loaded sources to speed up local testing during development
+	if [[ -e "${default_sources_dir_home}"/local/linux-"${linux_to_compile}".tar.xz ]]; then 
+		local downloadurl="file://${default_sources_dir_home}"/local/linux-"${linux_to_compile}".tar.xz
+	else
+		local downloadurl=https://cdn.kernel.org/pub/linux/kernel/v"${linux_to_compile%%\.*}".x/linux-"${linux_to_compile}".tar.xz
+	fi
+
+	# find a downloadtools
+	if type curl &> /dev/null ; then
+		local downloadtool="curl --silent"
+	elif type wget &> /dev/null ; then
+		local downloadtool="wget -O - --quiet"
+	else
+		echo "Need either curl or wget for dowload" >&2
+		exit 2
+	fi
+
+	# download and extract
+	echo -n "Downloading source: This might take a while... "
+	if ! ${downloadtool} ${downloadurl}| unxz | tar -C "${default_sources_dir_home}downloading" -x ; then
+		rm -rf "${default_sources_dir_home}downloading"
+		echo
+		echo "Downloading ${downloadurl} or extraction failed" >&2 
+		exit 2
+	fi
+	echo "Done."
+
+	mv "${default_sources_dir_home}downloading/"* "${default_sources_dir_home}" || exit 2
+	rmdir "${default_sources_dir_home}downloading/" || exit 2
+
+	dir_sources="${default_sources_dir_home%%/}"/linux-"${linux_to_compile}"
 }
 
 
@@ -237,15 +324,15 @@ kcbench_echo ()
 
 kcbench_main()
 {
-	# info
+	# infos
 	kcebench_sysinfo 2
 
 	# create defconfig
 	kcbench_echo 1 3 "Creating default configuration with 'make defconfig'."
-	make O="${dir_outputtmp}" -C "${dir_sources}" -j ${default_number_of_jobs} defconfig >> "${kcbench_logdir}"/make_defconfig 2>&1
+	make O="${dir_outputtmp}" CC=${compiler} -C "${dir_sources}" -j ${default_number_of_jobs} defconfig >> "${kcbench_logdir}"/make_defconfig 2>&1
 
 	# prepration run
-	if [[ ! "${no_cachefill}" ]]; then
+	if [[ "${cachefillrun}" ]]; then
 		# Note: I tried to use something like this first:
 		# find "${dir_sources}" -type f | grep -e '.h$'  -e '.c$' -e 'Makefile' -e 'Kconfig' -e 'Kbuild' -e '.S$' | xargs cat > /dev/null
 		# But it does not work as good as a thrown-away compile-run
@@ -254,7 +341,7 @@ kcbench_main()
 		if [[ "${show_result_from_cache_free_run}" ]]; then
 			kcbench_compile_kernel 2 ${default_number_of_jobs} run-0-fillcaches "Filling caches:     "
 		else
-			(( ${verboselevel} == 2 )) && kcbench_echo 1 2 -n "Filling caches:     This might take a while... "
+			kcbench_echo 1 2 -n "Filling caches:     This might take a while... "
 			kcbench_compile_kernel 3 ${default_number_of_jobs} run-0-fillcaches "Fill cache run (${default_number_of_jobs})"
 			kcbench_echo 1 3 "-------------------------------------------------------------------------------"
 		fi
@@ -341,7 +428,7 @@ parse_results ()
 
 	if [[ "${this_runtype}" != "run-0-fillcaches" ]]; then
 		local time_points="$(echo 1000000/${tm_elapsed_s} | /usr/bin/bc)"
-		kcbench_echo 1 ${this_verboselevel} "${time_points} (e:${tm_elapsed_s} P:${tm_cpu_p} U:${tm_user_s} S:${tm_kernel_s} F:${tm_pgfault_maj})"
+		kcbench_echo 1 ${this_verboselevel} "${time_points} points  (e:${tm_elapsed_s} sec  P:${tm_cpu_p}  U:${tm_user_s} sec  S:${tm_kernel_s} sec)"
 		if [[ "${print_detailed_results}" ]]; then
 			echo "  Elapsed Time(E): ${tm_elapsed} (${tm_elapsed_s} seconds)"
 			echo "  Kernel time (S): ${tm_kernel_s} seconds"
@@ -365,7 +452,7 @@ kcbench_cleanup_builddir()
 {
 	# cleanup
 	kcbench_echo 1 3 "Cleaning up builddir"
-	make O="${dir_outputtmp}" -C "${dir_sources}" -j ${default_number_of_jobs} clean &> "${kcbench_logdir}/make_clean"
+	make O="${dir_outputtmp}" CC=${compiler} -C "${dir_sources}" -j ${default_number_of_jobs} clean &> "${kcbench_logdir}/make_clean"
 }
 
 kcbench_compile_kernel()
@@ -376,12 +463,12 @@ kcbench_compile_kernel()
 	local this_logfile="${kcbench_logdir%%/}/${3}"
 	local this_msgstart="${4}"
 
-	echo "make O=${dir_outputtmp} -C ${dir_sources} -j ${this_nrjobs} vmlinux" > "${this_logfile}"
-	kcbench_echo 1 4 "Running 'make O=${dir_outputtmp} -C ${dir_sources} -j ${this_nrjobs} vmlinux'"
+	echo "make O=${dir_outputtmp} CC=${compiler} -C ${dir_sources} -j ${this_nrjobs} vmlinux" > "${this_logfile}"
+	kcbench_echo 1 4 "Running 'make O=${dir_outputtmp} CC=${compiler} -C ${dir_sources} -j ${this_nrjobs} vmlinux'"
 
 	kcbench_echo 1 ${this_verboselevel} -n "${this_msgstart}"
 
-	if /usr/bin/time -o "${this_logfile}.time" -f 'E %E\ne %e\nS %S\nU %U\nP %P\nM %M\nF %F\nR %R\nW %W\nc %c\nw %w\nI %I\nO %O\nx %x' make O="${dir_outputtmp}" -C "${dir_sources}" -j ${this_nrjobs} vmlinux >> "${this_logfile}" 2>&1 ; then
+	if /usr/bin/time -o "${this_logfile}.time" -f 'E %E\ne %e\nS %S\nU %U\nP %P\nM %M\nF %F\nR %R\nW %W\nc %c\nw %w\nI %I\nO %O\nx %x' make O="${dir_outputtmp}" CC=${compiler} -C "${dir_sources}" -j ${this_nrjobs} vmlinux >> "${this_logfile}" 2>&1 ; then
 	#if /usr/bin/time -o "${this_logfile}.time" -f 'E %E\ne %e\nS %S\nU %U\nP %P\nM %M\nF %F\nR %R\nW %W\nc %c\nw %w\nI %I\nO %O\nx %x' dd if=/dev/urandom bs=10M count=1 2>/dev/null | md5sum >> "${this_logfile}" 2>&1 ; then	
 		parse_results "${this_logfile}.time" ${this_verboselevel} "${this_runtype}"
 		kcbench_cleanup_builddir
@@ -416,10 +503,10 @@ kcbench_compile_kernel()
 kcebench_sysinfo()
 {
 	kcbench_echo 1 ${1} "Linux running:      $(uname -r) on $(uname -i) ($(uname -n))"
-	kcbench_echo 1 ${1} "Processor Cores:    $(grep '^processor' < /proc/cpuinfo  | wc -l) -- $(grep 'model name' /proc/cpuinfo  | sed 's!model name\t: !!' | sort | uniq)"
-	kcbench_echo 1 ${1} "Compiler:           $(gcc --version | head -n 1)"
+	kcbench_echo 1 ${1} "Processor Cores:    $(nproc --all) -- $(grep 'model name' /proc/cpuinfo  | sed 's!model name\t: !!' | sort | uniq)"
+	kcbench_echo 1 ${1} "Compiler:           $(${compiler} --version | head -n 1)"
 	[[ -r /proc/memory ]] && kcbench_echo 1 ${1} "Memory:             $(( $(awk '/MemTotal:/ { print $2}' /proc/meminfo) / 1024  )) MByte"
-	kcbench_echo 1 ${1} "Linux compiled:     $(basename "${dir_sources}") (${dir_sources})"
+	kcbench_echo 1 ${1} "Linux compiled:     $(basename "${dir_sources}" | sed 's!linux-!!') (${dir_sources})"
 }
 
 myprog_help()
@@ -427,18 +514,22 @@ myprog_help()
 	echo "Usage: ${myprog_name} [options]"
 	echo $'\n'"Compiles a kernel and messures the time it takes"
 	echo $'\n'"Available options:"
-	echo " -d, --compiledir <path>      -- use <path>/kcbench for compile results (O=)"
+	echo " -d, --compiledir <dir>       -- compile in <path>/kcbench (make 'O=#')"
 	echo " -r, --detailedresults        -- print more detailed results"
-	echo " -a, --ignore-running-apps    -- Do not warn if cron or other daemons run"
 	echo " -i, --infinite               -- run endlessly"
 	echo " -n, --iterations <int>       -- number or iterations"
 	echo " -j, --jobs <int>             -- number of jobs to use ('make -j #') (*)"
-	echo " -c, --no-cachefill           -- omit the initial kernel compile to fill caches"
 	echo " -q, --quiet                  -- quiet"
 	echo " -v, --verbose                -- increase verboselevel (*)"
-	echo " -l, --savefailedlogs <path>  -- save log of failed compile runs in <path>"
-	echo " -s, --src (<path>|<version>) -- take sources in <path> or from"
-	echo "                                 /usr/share/kcdata/linux-<version>"
+	echo " -s, --src (<dir>|<version>)  -- take sources in <dir> or from either"
+	echo "                                 /usr/share/kcdata/linux-<version> or "
+	echo "                                 ~/.cache/kcbench/linux-<version>; download"
+	echo "                                 ~/.cache/kcbench/linux-<version>; download"
+	echo "                                 them automatically if not found."
+	echo " -l, --savefailedlogs <dir>   -- save log of failed compile runs in <dir>"
+	echo "     --cachefill              -- omit results from initial compile"
+	echo "     --compiler (<exec>)      -- use specified compiler"
+	echo "     --no-download            -- do not download sources automatically"
 	echo
 	echo " -h, --help                   -- this text"
 	echo " -V, --version                -- output program version"
@@ -456,7 +547,7 @@ while [ "${1}" ] ; do
 	case "${1}" in
 		-d|--compiledir)
 			shift
-			dir_topoutput="${1}"
+			compile_directory="${1}"
 			shift
 			;;
 		-r|--detailedresults)
@@ -469,10 +560,6 @@ while [ "${1}" ] ; do
 			number_of_jobs="${number_of_jobs} ${1}"
 			shift
 			;;
-		-a|--ignore-running-apps)
-			shift
-			ignore_running_apps="true"
-			;;
 		-i|--infinite)
 			shift
 			run_infinite="true"
@@ -484,7 +571,11 @@ while [ "${1}" ] ; do
 			;;
 		-c|--no-cachefill)
 			shift
-			no_cachefill="true"
+			# old option ( <= 0.4), ignored, as it's the default these days
+			;;
+		--cachefill)
+			shift
+			cachefillrun="true"
 			;;
 		-q|--quiet)
 			verboselevel="1"
@@ -502,6 +593,15 @@ while [ "${1}" ] ; do
 		-s|--src)
 			shift
 			compile_srctree="${1}"
+			shift
+			;;
+		--compiler)
+			shift
+			compiler="${1}"
+			shift
+			;;
+		--no-download)
+			noautodownloads="true"
 			shift
 			;;
 		-h|--help)
