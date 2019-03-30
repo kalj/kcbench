@@ -25,7 +25,7 @@
 
 # this is me
 myprog_name=kcbench
-myprog_version=0.4-beta1
+myprog_version=0.4.1
 set -e
 
 # set some defaults -- called before cmdoptions are parsed
@@ -51,7 +51,7 @@ kcbench_init ()
 	compiler="gcc"
 
 	# Download this version by default:
-	default_linux_to_compile="4.14"
+	default_linux_to_compile="4.19"
 
 	# retrieve settings from file (undocumented)
 	if [[ -e "${HOME}/.config/kcbench" ]]; then
@@ -64,7 +64,11 @@ kcbench_init ()
 kcbench_startupchecks()
 {
 	# do we have all the tools we need?
-	kcbench_checktools make ld awk /usr/bin/time "${compiler}"
+	kcbench_checktools make ld awk /usr/bin/time "${compiler}" pkg-config
+	if ! pkg-config --modversion libelf &> /dev/null; then
+		echo "Please install libelf-dev, libelf-devel or elfutils-libelf-devel. Aboring" >&2
+		exit 2		
+	fi
 	
 	# decide which version to compile by default
 	kcbench_decideversion
@@ -183,6 +187,9 @@ kcbench_decideversion()
 	else
 		case $(gcc --version | head -n 1 | cut -d ' ' -f 3 2>/dev/null | cut -d . -f 1 2>/dev/null) in
 		# this is known to only work with gcc right now
+		9)
+			linux_to_compile="4.19"
+			;;
 		4|5|6|7|8)
 			linux_to_compile="4.14"
 			;;
