@@ -26,7 +26,7 @@
 # this is me
 myprog_name=kcbench
 myprog_version=0.4.1
-set -e
+# set -e
 
 # set some defaults -- called before cmdoptions are parsed
 kcbench_init ()
