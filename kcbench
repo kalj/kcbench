@@ -337,6 +337,12 @@ kcbench_main()
 	# create defconfig
 	kcbench_echo 1 3 "Creating default configuration with 'make defconfig'."
 	make O="${dir_outputtmp}" CC=${compiler} -C "${dir_sources}" -j ${default_number_of_jobs} defconfig >> "${kcbench_logdir}"/make_defconfig 2>&1
+        local returncode=$?
+        if (( ${returncode} != 0 )); then
+                kcbench_echo 2 1 "Failed creating kernel config:"
+                cat "${kcbench_logdir}/make_defconfig"
+                kcbench_exit 2
+        fi
 
 	# prepration run
 	if [[ "${cachefillrun}" ]]; then
