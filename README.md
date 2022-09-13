@@ -1,6 +1,8 @@
 kcbench
 =======
 
+**NOTE:** *This was forked from [`github.com/knurd/kcbench`](github.com/knurd/kcbench) which, in the meantime, has been deleted/brought offline.*
+
 Kcbench is a simple benchmarking script that will compile a Linux kernel three times in a row and measure the time it takes. To give it a try simply run:
 
 ```
